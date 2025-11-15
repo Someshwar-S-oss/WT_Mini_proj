@@ -5,20 +5,13 @@ import { GitService } from '../services/gitService';
 import { body, validationResult } from 'express-validator';
 
 export const createBranchValidation = [
-  body('name').notEmpty().trim(),
   body('description').optional().trim(),
   body('fromBranch').optional().trim(),
+  body('sourceBranch').optional().trim(),
 ];
 
 export const createBranch = async (req: Request, res: Response): Promise<void> => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      res.status(400).json({ errors: errors.array() });
-      return;
-    }
-
-    const { id } = req.params;
     // Accept both 'name' and 'branchName', and 'fromBranch' and 'sourceBranch'
     const name = req.body.name || req.body.branchName;
     const fromBranch = req.body.fromBranch || req.body.sourceBranch;
@@ -28,6 +21,14 @@ export const createBranch = async (req: Request, res: Response): Promise<void> =
       res.status(400).json({ message: 'Branch name is required' });
       return;
     }
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+
+    const { id } = req.params;
 
     // Check if branch already exists
     const existingBranch = await Branch.findOne({ notebook: id, name });
@@ -53,7 +54,38 @@ export const createBranch = async (req: Request, res: Response): Promise<void> =
 
     // Create branch in Git
     const gitService = new GitService(notebook.gitRepoPath);
-    await gitService.createBranch(name, sourceBranchName);
+    
+    // Ensure repo is initialized with at least one commit
+    const isInitialized = await gitService.isRepoInitialized();
+    if (!isInitialized) {
+      console.log('Initializing repository...');
+      await gitService.initRepo();
+    } else {
+      // Check if there are commits
+      try {
+        const log = await gitService.getCommitHistory('main', 1);
+        if (!log || !log.latest) {
+          console.log('No commits found, initializing...');
+          await gitService.initRepo();
+        }
+      } catch (error) {
+        console.log('Error checking commits, initializing...');
+        await gitService.initRepo();
+      }
+    }
+    
+    try {
+      await gitService.createBranch(name, sourceBranchName);
+    } catch (error: any) {
+      console.error('Branch creation error:', error);
+      if (error.message.includes('no commits yet') || error.message.includes('not a commit')) {
+        res.status(400).json({ 
+          message: 'Cannot create branch yet. Please make an initial commit to the notebook first by editing a file.' 
+        });
+        return;
+      }
+      throw error;
+    }
 
     // Get the last commit from source branch
     const lastCommitHash = sourceBranch.lastCommitHash;

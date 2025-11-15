@@ -1,15 +1,22 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import MonacoEditor from '@monaco-editor/react';
+import { useAuth } from '../context/AuthContext';
 import { useNotebook } from '../hooks/useNotebooks';
 import { useBranches, useCheckoutBranch, useCreateBranch } from '../hooks/useBranches';
 import { useFileTree, useCreateCommit } from '../hooks/useCommits';
 import api from '../services/api';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
+import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
 import { Label } from '../components/ui/label';
+import { ChevronLeft, Lock } from 'lucide-react';
+import MarkdownToolbar from '../components/common/MarkdownToolbar';
+import ContextMenu, { ContextMenuItem } from '../components/common/ContextMenu';
+import AlertDialog, { AlertType } from '../components/common/AlertDialog';
+import ConfirmDialog from '../components/common/ConfirmDialog';
 
 interface FileNode {
   name: string;
@@ -19,6 +26,7 @@ interface FileNode {
 }
 
 export default function Editor() {
+  const { user } = useAuth();
   const { id: notebookId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -38,8 +46,18 @@ export default function Editor() {
   const [newBranchName, setNewBranchName] = useState('');
   const [newFileName, setNewFileName] = useState('');
   const [showNewFileDialog, setShowNewFileDialog] = useState(false);
+  const editorRef = useRef<any>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: FileNode } | null>(null);
 
-  const { data: notebookData } = useNotebook(notebookId!);
+  // Alert/Confirm states
+  const [alert, setAlert] = useState<{ isOpen: boolean; message: string; type: AlertType; title?: string }>({ 
+    isOpen: false, message: '', type: 'info' 
+  });
+  const [confirm, setConfirm] = useState<{ isOpen: boolean; message: string; onConfirm: () => void; title?: string }>({ 
+    isOpen: false, message: '', onConfirm: () => {} 
+  });
+
+  const { data: notebookData, isLoading: notebookLoading, error: notebookError } = useNotebook(notebookId!);
   const { data: branchesData } = useBranches(notebookId!);
   const { data: fileTree, refetch: refetchFileTree } = useFileTree(notebookId!, currentBranch);
   const checkoutBranch = useCheckoutBranch();
@@ -69,6 +87,97 @@ export default function Editor() {
     setHasUnsavedChanges(true);
   };
 
+  const handleMarkdownInsert = (text: string, cursorOffset: number = 0) => {
+    if (!editorRef.current) return;
+
+    const editor = editorRef.current;
+    const selection = editor.getSelection();
+    const position = selection.getPosition();
+
+    // Insert text at cursor position
+    editor.executeEdits('', [
+      {
+        range: selection,
+        text: text,
+        forceMoveMarkers: true,
+      },
+    ]);
+
+    // Move cursor to the specified position
+    const newPosition = {
+      lineNumber: position.lineNumber,
+      column: position.column + text.length + cursorOffset,
+    };
+    editor.setPosition(newPosition);
+    editor.focus();
+
+    // Update content
+    setFileContent(editor.getValue());
+    setHasUnsavedChanges(true);
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, file: FileNode) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (file.type === 'file') {
+      setContextMenu({ x: e.clientX, y: e.clientY, file });
+    }
+  };
+
+  const getFileContextMenuItems = (file: FileNode): ContextMenuItem[] => {
+    const isCurrentFile = selectedFile === file.path;
+    
+    return [
+      {
+        label: 'Open',
+        icon: (
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+          </svg>
+        ),
+        onClick: () => {
+          setSelectedFile(file.path);
+          setSearchParams({ file: file.path, branch: currentBranch });
+        },
+        disabled: isCurrentFile,
+      },
+      {
+        label: 'View in Reader',
+        icon: (
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+          </svg>
+        ),
+        onClick: () => navigate(`/notebook/${notebookId}/reader?file=${encodeURIComponent(file.path)}&branch=${currentBranch}`),
+      },
+      { separator: true, label: '', onClick: () => {} },
+      {
+        label: 'Copy Path',
+        icon: (
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+        ),
+        onClick: () => {
+          navigator.clipboard.writeText(file.path);
+          setAlert({ isOpen: true, message: 'Path copied to clipboard!', type: 'success' });
+        },
+      },
+      {
+        label: 'Copy Filename',
+        icon: (
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        ),
+        onClick: () => {
+          navigator.clipboard.writeText(file.name);
+          setAlert({ isOpen: true, message: 'Filename copied to clipboard!', type: 'success' });
+        },
+      },
+    ];
+  };
+
   const handleSaveFile = async () => {
     if (!selectedFile || !notebookId) return;
 
@@ -79,10 +188,10 @@ export default function Editor() {
         content: fileContent,
       });
       setHasUnsavedChanges(false);
-      alert('File saved to working directory!');
+      setAlert({ isOpen: true, message: 'File saved to working directory!', type: 'success' });
     } catch (error) {
       console.error('Failed to save file:', error);
-      alert('Failed to save file');
+      setAlert({ isOpen: true, message: 'Failed to save file', type: 'error' });
     }
   };
 
@@ -91,7 +200,7 @@ export default function Editor() {
 
     // Ensure we have a file to commit
     if (!selectedFile) {
-      alert('Please select a file to commit');
+      setAlert({ isOpen: true, message: 'Please select a file to commit', type: 'warning' });
       return;
     }
 
@@ -121,19 +230,33 @@ export default function Editor() {
       setShowCommitDialog(false);
       setHasUnsavedChanges(false);
       refetchFileTree();
-      alert('Commit created successfully!');
+      setAlert({ isOpen: true, message: 'Commit created successfully!', type: 'success' });
     } catch (error: any) {
       console.error('Failed to create commit:', error);
       const errorMessage = error?.response?.data?.message || error.message || 'Failed to create commit';
-      alert(errorMessage);
+      setAlert({ isOpen: true, message: errorMessage, type: 'error' });
     }
   };
 
   const handleBranchChange = async (branchName: string) => {
     if (hasUnsavedChanges) {
-      if (!confirm('You have unsaved changes. Do you want to switch branches anyway?')) {
-        return;
-      }
+      setConfirm({
+        isOpen: true,
+        title: 'Unsaved Changes',
+        message: 'You have unsaved changes. Do you want to switch branches anyway?',
+        onConfirm: async () => {
+          try {
+            await checkoutBranch.mutateAsync({ notebookId: notebookId!, branchName });
+            setCurrentBranch(branchName);
+            setSearchParams({ branch: branchName });
+            refetchFileTree();
+          } catch (error) {
+            console.error('Failed to checkout branch:', error);
+            setAlert({ isOpen: true, message: 'Failed to switch branch', type: 'error' });
+          }
+        }
+      });
+      return;
     }
 
     try {
@@ -143,7 +266,7 @@ export default function Editor() {
       refetchFileTree();
     } catch (error) {
       console.error('Failed to checkout branch:', error);
-      alert('Failed to switch branch');
+      setAlert({ isOpen: true, message: 'Failed to switch branch', type: 'error' });
     }
   };
 
@@ -158,10 +281,10 @@ export default function Editor() {
       });
       setNewBranchName('');
       setShowNewBranchDialog(false);
-      alert('Branch created successfully!');
+      setAlert({ isOpen: true, message: 'Branch created successfully!', type: 'success' });
     } catch (error) {
       console.error('Failed to create branch:', error);
-      alert('Failed to create branch');
+      setAlert({ isOpen: true, message: 'Failed to create branch', type: 'error' });
     }
   };
 
@@ -181,7 +304,7 @@ export default function Editor() {
       refetchFileTree();
     } catch (error) {
       console.error('Failed to create file:', error);
-      alert('Failed to create file');
+      setAlert({ isOpen: true, message: 'Failed to create file', type: 'error' });
     }
   };
 
@@ -230,6 +353,7 @@ export default function Editor() {
             setSelectedFile(node.path);
             setSearchParams({ file: node.path, branch: currentBranch });
           }}
+          onContextMenu={(e) => handleContextMenu(e, node)}
           className={`flex items-center py-2 px-2 rounded-md mx-2 cursor-pointer transition-all group ${
             isSelected 
               ? 'bg-primary/10 border-l-2 border-primary text-primary' 
@@ -269,6 +393,91 @@ export default function Editor() {
     return languageMap[ext || ''] || 'plaintext';
   };
 
+  // Error handling
+  if (notebookError) {
+    const error = notebookError as any;
+    const is403 = error?.response?.status === 403;
+    
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <Card className="max-w-md w-full">
+          <CardHeader>
+            <CardTitle className="text-destructive flex items-center gap-2">
+              {is403 ? (
+                <>
+                  <Lock className="w-5 h-5" />
+                  Access Denied
+                </>
+              ) : (
+                'Error Loading Notebook'
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {is403 
+                ? 'You do not have permission to edit this notebook. You may need editor access.'
+                : error?.response?.data?.message || error?.message || 'An unexpected error occurred.'}
+            </p>
+            <Button onClick={() => navigate('/dashboard')} variant="outline" className="w-full">
+              <ChevronLeft className="w-4 h-4 mr-2" />
+              Back to Dashboard
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (notebookLoading || !notebook) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent mb-4"></div>
+          <p className="text-muted-foreground">Loading notebook...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Check if user has editor permissions
+  const isOwner = notebook.owner._id === user?._id;
+  const collaborator = notebook.collaborators.find((c: any) => c.user._id === user?._id);
+  const userRole = isOwner ? 'OWNER' : collaborator?.role;
+  const canEdit = isOwner || userRole === 'EDITOR';
+
+  if (!canEdit) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <Card className="max-w-md w-full">
+          <CardHeader>
+            <CardTitle className="text-destructive flex items-center gap-2">
+              <Lock className="w-5 h-5" />
+              Editor Access Required
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              You need editor permissions to modify this notebook. You currently have <span className="font-semibold text-foreground">{userRole || 'no'}</span> access.
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Contact the notebook owner to request editor access, or use the reader mode to view files.
+            </p>
+            <div className="flex gap-2">
+              <Button onClick={() => navigate(`/notebook/${notebookId}`)} variant="outline" className="flex-1">
+                <ChevronLeft className="w-4 h-4 mr-2" />
+                Back to Notebook
+              </Button>
+              <Button onClick={() => navigate(`/notebook/${notebookId}/reader`)} className="flex-1">
+                Open Reader
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen flex flex-col bg-background">
       {/* Header */}
@@ -284,7 +493,7 @@ export default function Editor() {
             Back
           </button>
           <div className="h-6 w-px bg-border"></div>
-          <h1 className="text-lg font-semibold text-foreground">{notebook?.name}</h1>
+          <h1 className="text-lg font-semibold text-foreground">{notebook.name}</h1>
           {selectedFile && (
             <span className="text-sm text-muted-foreground flex items-center gap-1">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -296,24 +505,46 @@ export default function Editor() {
         </div>
 
         <div className="flex items-center gap-2">
-          <select
-            value={currentBranch}
-            onChange={(e) => handleBranchChange(e.target.value)}
-            className="input h-9 text-sm min-w-[150px]"
-          >
-            {branches.map((branch: any) => (
-              <option key={branch._id} value={branch.name}>
-                🌿 {branch.name}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <select
+              value={currentBranch}
+              onChange={(e) => handleBranchChange(e.target.value)}
+              className="h-9 text-sm min-w-[180px] pl-9 pr-8 appearance-none cursor-pointer bg-card text-foreground border border-border rounded-md hover:bg-accent transition-colors font-medium focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+            >
+              {branches.map((branch: any) => (
+                <option key={branch._id} value={branch.name}>
+                  {branch.name}
+                </option>
+              ))}
+            </select>
+            <svg 
+              className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-primary pointer-events-none" 
+              fill="none" 
+              stroke="currentColor" 
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+            </svg>
+            <svg 
+              className="w-3 h-3 absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" 
+              fill="none" 
+              stroke="currentColor" 
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
 
           <Button
             onClick={() => setShowNewBranchDialog(true)}
             variant="secondary"
             size="sm"
+            className="flex items-center gap-1"
           >
-            + Branch
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            New Branch
           </Button>
 
           {hasUnsavedChanges && (
@@ -370,26 +601,39 @@ export default function Editor() {
         </aside>
 
         {/* Editor */}
-        <main className="flex-1 bg-background">
+        <main className="flex-1 bg-background flex flex-col">
           {selectedFile ? (
-            <MonacoEditor
-              height="100%"
-              language={getLanguageFromFile(selectedFile)}
-              value={fileContent}
-              onChange={handleEditorChange}
-              theme="vs-dark"
-              options={{
-                minimap: { enabled: true },
-                fontSize: 14,
-                wordWrap: 'on',
-                automaticLayout: true,
-                fontFamily: "'Fira Code', 'Cascadia Code', Consolas, monospace",
-                fontLigatures: true,
-                cursorBlinking: 'smooth',
-                smoothScrolling: true,
-                padding: { top: 16, bottom: 16 },
-              }}
-            />
+            <>
+              {getLanguageFromFile(selectedFile) === 'markdown' && (
+                <MarkdownToolbar
+                  onInsert={handleMarkdownInsert}
+                  disabled={!selectedFile}
+                />
+              )}
+              <div className="flex-1">
+                <MonacoEditor
+                  height="100%"
+                  language={getLanguageFromFile(selectedFile)}
+                  value={fileContent}
+                  onChange={handleEditorChange}
+                  onMount={(editor) => {
+                    editorRef.current = editor;
+                  }}
+                  theme="vs-dark"
+                  options={{
+                    minimap: { enabled: true },
+                    fontSize: 14,
+                    wordWrap: 'on',
+                    automaticLayout: true,
+                    fontFamily: "'Fira Code', 'Cascadia Code', Consolas, monospace",
+                    fontLigatures: true,
+                    cursorBlinking: 'smooth',
+                    smoothScrolling: true,
+                    padding: { top: 16, bottom: 16 },
+                  }}
+                />
+              </div>
+            </>
           ) : (
             <div className="h-full flex items-center justify-center text-muted-foreground">
               <div className="text-center">
@@ -529,6 +773,35 @@ export default function Editor() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={getFileContextMenuItems(contextMenu.file)}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {/* Custom Dialogs */}
+      <AlertDialog
+        isOpen={alert.isOpen}
+        onClose={() => setAlert({ ...alert, isOpen: false })}
+        message={alert.message}
+        type={alert.type}
+        title={alert.title}
+      />
+
+      <ConfirmDialog
+        isOpen={confirm.isOpen}
+        onClose={() => setConfirm({ ...confirm, isOpen: false })}
+        onConfirm={confirm.onConfirm}
+        message={confirm.message}
+        title={confirm.title}
+        confirmText="Switch Branch"
+        variant="default"
+      />
     </div>
   );
 }

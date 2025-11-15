@@ -24,6 +24,9 @@ export interface Notebook {
   gitRepoPath: string;
   owner: User;
   collaborators: Collaborator[];
+  starCount?: number;
+  forkCount?: number;
+  viewCount?: number;
   createdAt: string;
   updatedAt: string;
 }

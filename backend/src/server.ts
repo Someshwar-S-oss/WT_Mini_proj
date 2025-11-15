@@ -12,6 +12,10 @@ import authRoutes from './routes/auth.routes';
 import notebookRoutes from './routes/notebook.routes';
 import branchRoutes from './routes/branch.routes';
 import commitRoutes from './routes/commit.routes';
+import userRoutes from './routes/user.routes';
+import uploadRoutes from './routes/upload.routes';
+import featureRoutes from './routes/feature.routes';
+import notificationRoutes from './routes/notification.routes';
 
 const app: Application = express();
 
@@ -46,9 +50,14 @@ app.get('/health', (_req, res) => {
 
 // API routes
 app.use('/api/auth', authRoutes);
+app.use('/api/notebooks', featureRoutes); // Must be before notebookRoutes for /starred, /search, /activity
 app.use('/api/notebooks', notebookRoutes);
 app.use('/api/notebooks/:id/branches', branchRoutes);
 app.use('/api/notebooks/:id/commits', commitRoutes);
+app.use('/api/notebooks/:id/uploads', uploadRoutes);
+app.use('/api/notebooks/:id/comments', require('./routes/comment.routes').default);
+app.use('/api/users', userRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // 404 handler
 app.use((_req, res) => {

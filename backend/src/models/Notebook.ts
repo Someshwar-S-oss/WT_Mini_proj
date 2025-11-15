@@ -21,6 +21,9 @@ export interface INotebook extends Document {
   gitRepoPath: string;
   owner: mongoose.Types.ObjectId;
   collaborators: ICollaborator[];
+  starCount: number;
+  forkCount: number;
+  viewCount: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -77,6 +80,18 @@ const NotebookSchema: Schema = new Schema(
       required: true,
     },
     collaborators: [CollaboratorSchema],
+    starCount: {
+      type: Number,
+      default: 0,
+    },
+    forkCount: {
+      type: Number,
+      default: 0,
+    },
+    viewCount: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,

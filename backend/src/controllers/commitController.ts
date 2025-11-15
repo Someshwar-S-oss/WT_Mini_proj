@@ -199,22 +199,74 @@ export const getCommitDiff = async (req: Request, res: Response): Promise<void> 
     
     try {
       if (commit.parentHash) {
+        console.log(`Getting diff between ${commit.parentHash} and ${hash}`);
         diff = await gitService.getDiff(commit.parentHash, hash);
       } else {
-        // First commit - show all files as additions
-        diff = await gitService.getDiff('', hash);
+        // First commit - show all files as additions (use special 4b825dc git empty tree hash)
+        console.log(`Getting diff for first commit ${hash}`);
+        diff = await gitService.getDiff('4b825dc642cb6eb9a060e54bf8d69288fbee4904', hash);
       }
+      console.log(`Diff length: ${diff.length} characters`);
     } catch (error: any) {
-      console.log('Error getting diff:', error.message);
+      console.error('Error getting diff:', error.message);
       diff = '';
     }
 
-    // Return commit with file changes from database
-    const files = commit.filesChanged.map((file: any) => ({
-      path: file.path,
-      additions: file.additions,
-      deletions: file.deletions,
-    }));
+    // Parse diff into per-file diffs
+    const parseDiffByFile = (diffText: string) => {
+      const fileMap = new Map<string, string>();
+      
+      if (!diffText || diffText.length === 0) {
+        console.log('No diff text to parse');
+        return fileMap;
+      }
+      
+      const lines = diffText.split('\n');
+      let currentFile = '';
+      let currentDiff: string[] = [];
+
+      for (const line of lines) {
+        // Check for file headers like "diff --git a/file.txt b/file.txt"
+        if (line.startsWith('diff --git')) {
+          // Save previous file
+          if (currentFile && currentDiff.length > 0) {
+            fileMap.set(currentFile, currentDiff.join('\n'));
+            console.log(`Parsed diff for ${currentFile}: ${currentDiff.length} lines`);
+          }
+          
+          // Extract filename from "diff --git a/file.txt b/file.txt"
+          const match = line.match(/diff --git a\/(.+?) b\//);
+          currentFile = match ? match[1] : '';
+          currentDiff = [line];
+          console.log(`Found file in diff: ${currentFile}`);
+        } else if (currentFile) {
+          currentDiff.push(line);
+        }
+      }
+
+      // Save last file
+      if (currentFile && currentDiff.length > 0) {
+        fileMap.set(currentFile, currentDiff.join('\n'));
+        console.log(`Parsed diff for ${currentFile}: ${currentDiff.length} lines`);
+      }
+
+      console.log(`Total files parsed: ${fileMap.size}`);
+      return fileMap;
+    };
+
+    const fileDiffMap = parseDiffByFile(diff);
+
+    // Return commit with file changes from database, including individual file diffs
+    const files = commit.filesChanged.map((file: any) => {
+      const fileDiff = fileDiffMap.get(file.path);
+      console.log(`File ${file.path}: diff ${fileDiff ? 'found' : 'NOT FOUND'} (${fileDiff?.length || 0} chars)`);
+      return {
+        path: file.path,
+        additions: file.additions,
+        deletions: file.deletions,
+        diff: fileDiff || '',
+      };
+    });
 
     res.json({ 
       diff, 

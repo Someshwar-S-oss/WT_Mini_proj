@@ -15,19 +15,31 @@ const router = Router({ mergeParams: true });
 
 router.use(authenticateToken);
 
-router.get('/', getBranches);
+router.get(
+  '/',
+  checkNotebookPermission([CollaboratorRole.OWNER, CollaboratorRole.EDITOR, CollaboratorRole.VIEWER]),
+  getBranches
+);
 router.post(
   '/',
   checkNotebookPermission([CollaboratorRole.OWNER, CollaboratorRole.EDITOR]),
   createBranchValidation,
   createBranch
 );
-router.get('/:name', getBranchByName);
+router.get(
+  '/:name',
+  checkNotebookPermission([CollaboratorRole.OWNER, CollaboratorRole.EDITOR, CollaboratorRole.VIEWER]),
+  getBranchByName
+);
 router.delete(
   '/:name',
   checkNotebookPermission([CollaboratorRole.OWNER, CollaboratorRole.EDITOR]),
   deleteBranch
 );
-router.post('/:name/checkout', checkoutBranch);
+router.post(
+  '/:name/checkout',
+  checkNotebookPermission([CollaboratorRole.OWNER, CollaboratorRole.EDITOR, CollaboratorRole.VIEWER]),
+  checkoutBranch
+);
 
 export default router;

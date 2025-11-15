@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard.tsx';
 import NotebookView from './pages/NotebookView.tsx';
 import Editor from './pages/Editor.tsx';
 import CommitHistory from './pages/CommitHistory.tsx';
+import Reader from './pages/Reader.tsx';
 
 function App() {
   const { isAuthenticated, loading } = useAuth();
@@ -43,6 +44,10 @@ function App() {
       <Route
         path="/notebook/:id/commits"
         element={isAuthenticated ? <CommitHistory /> : <Navigate to="/login" />}
+      />
+      <Route
+        path="/notebook/:id/reader"
+        element={isAuthenticated ? <Reader /> : <Navigate to="/login" />}
       />
       <Route path="/" element={<Navigate to="/dashboard" />} />
     </Routes>

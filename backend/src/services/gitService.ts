@@ -34,15 +34,44 @@ export class GitService {
     await git.addConfig('user.name', 'NoteVerse System');
     await git.addConfig('user.email', 'system@noteverse.com');
     
+    // Explicitly set initial branch to main
+    try {
+      await git.raw(['branch', '-M', 'main']);
+    } catch (error) {
+      // Ignore error if branch doesn't exist yet
+    }
+    
     // Create initial README
     const readmePath = path.join(this.repoPath, 'README.md');
     await fs.writeFile(readmePath, '# Notebook\n\nInitial commit');
     await git.add('README.md');
     await git.commit('Initial commit');
+    
+    // Ensure we're on main branch after commit
+    try {
+      await git.raw(['branch', '-M', 'main']);
+    } catch (error) {
+      console.log('Could not rename branch to main:', error);
+    }
   }
 
   async createBranch(branchName: string, fromBranch: string = 'main'): Promise<void> {
     const git = await this.ensureGit();
+    
+    // Check if there are any commits first
+    try {
+      const log = await git.log({ maxCount: 1 });
+      if (!log || !log.latest) {
+        // No commits yet, can't create branch from another branch
+        throw new Error('Cannot create branch: repository has no commits yet. Please make an initial commit first.');
+      }
+    } catch (error: any) {
+      if (error.message.includes('does not have any commits yet')) {
+        throw new Error('Cannot create branch: repository has no commits yet. Please make an initial commit first.');
+      }
+      throw error;
+    }
+    
     await git.checkoutBranch(branchName, fromBranch);
   }
 
